@@ -10,7 +10,10 @@
    ふたりが事前に確認したいときは　URL の後ろに ?preview を付けて開く
    ロゴなどが一瞬でも見えないよう　ページを描く前にここで判定する */
 const OPEN_AT = '2026-10-17T15:00:00+09:00';
-if (!/[?&]preview\b/.test(location.search) && Date.now() < new Date(OPEN_AT).getTime()) document.documentElement.classList.add('waiting');
+// 切り替えの確認用　URL に ?test=30 を付けると「今から30秒後に公開」として動く
+const OPEN_TEST = location.search.match(/[?&]test=(\d+)/);
+const OPEN_MS = OPEN_TEST ? Date.now() + Number(OPEN_TEST[1]) * 1000 : new Date(OPEN_AT).getTime();
+if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.documentElement.classList.add('waiting');
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2311,7 +2314,7 @@ const Viewer = (function () {
 
 /* 最初の画面
    公開時刻より前は「お待ちください」を出し　時刻になったら自動でアプリに切り替える */
-const openTime = new Date(OPEN_AT).getTime();
+const openTime = OPEN_MS;
 const isOpen = () => /[?&]preview\b/.test(location.search) || Date.now() >= openTime;
 
 function startApp() {
