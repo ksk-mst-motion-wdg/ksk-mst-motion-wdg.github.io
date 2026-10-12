@@ -1243,7 +1243,13 @@ const Upload = (function () {
           } catch (_) { /* ヘッダーが読めなければ全部届いたとみなす */ }
           return resolve({ done: false, next: next });
         }
-        reject(Object.assign(new Error('送信できませんでした（' + xhr.status + '）'), { status: xhr.status }));
+        // Drive が返した理由（容量不足など）も添える
+        let why = '';
+        try {
+          const er = (JSON.parse(xhr.responseText || '{}').error) || {};
+          why = ((er.errors && er.errors[0] && er.errors[0].reason) || '') + (er.message ? ' ' + er.message : '');
+        } catch (_) { why = String(xhr.responseText || '').slice(0, 120); }
+        reject(Object.assign(new Error('送信できませんでした（' + xhr.status + '）' + (why ? ' ' + why.trim() : '')), { status: xhr.status }));
       };
       xhr.onerror = () => reject(Object.assign(new Error('通信がつながりませんでした'), { status: 0 }));
       xhr.ontimeout = xhr.onerror;
