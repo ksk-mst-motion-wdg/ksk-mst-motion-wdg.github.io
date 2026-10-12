@@ -177,10 +177,20 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
   .picker .hint { display: block; text-align: center; font-size: 13px; color: var(--ink-soft); margin-top: 8px; }
   .picker.disabled .btn { opacity: .4; pointer-events: none; }
 
-  .picks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 24px 0 0; padding: 0; list-style: none; }
+  .picks { display: grid; grid-template-columns: repeat(3, 1fr); align-content: start; gap: 6px; margin: 24px 0 0; padding: 0; list-style: none; }
   .pick { position: relative; aspect-ratio: 1; border-radius: 6px; overflow: hidden; background: rgba(255, 255, 255, .06); }
+  .picks .pick { align-self: start; }
+  .pick.wait { margin: 0; text-align: initial; } /* 待機ページの .wait と名前がかぶるので打ち消す */
+  .pick > .thumb, .pick > .ph { position: absolute; inset: 0; }
   .thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
   .ph { display: grid; place-items: center; width: 100%; height: 100%; font-size: 12px; color: var(--ink-soft); }
+  /* 動画のサムネを作っているあいだ　ゆっくり明滅させる */
+  .ph.loading { font-size: 0; animation: phpulse 1.4s ease-in-out infinite; background: rgba(255, 255, 255, .06); }
+  @keyframes phpulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .ph.loading { animation: none; } }
+  /* サムネが作れなかった動画は再生マークだけ */
+  .ph.play { font-size: 0; }
+  .ph.play::before { content: ''; width: 0; height: 0; border-style: solid; border-width: 9px 0 9px 15px; border-color: transparent transparent transparent rgba(255, 255, 255, .55); margin-left: 4px; }
   .vbadge {
     position: absolute; left: 6px; bottom: 7px;
     font-size: 10px; line-height: 1; color: #fff;
@@ -373,6 +383,7 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
   .viewer .stagewrap { touch-action: none; }
   .viewer.zoomed .side { display: none; }
   .viewer .stage iframe { width: 100%; height: 100%; border: 0; }
+  .viewer .stage video { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
   .viewer .save { color: var(--gold); font-size: 14px; letter-spacing: .08em; text-decoration: none; padding: 8px 4px; }
   .viewer .stagewrap { position: relative; min-height: 0; }
   .viewer .stagewrap .stage { position: absolute; inset: 0; }
@@ -980,7 +991,7 @@ const Upload = (function () {
     return new Promise(resolve => {
       const src = URL.createObjectURL(item.file);
       const v = document.createElement('video');
-      v.muted = true; v.playsInline = true; v.preload = 'auto';
+      v.muted = true; v.playsInline = true; v.preload = 'metadata';
       v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
       v.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
       let done = false;
@@ -991,7 +1002,7 @@ const Upload = (function () {
         v.remove(); URL.revokeObjectURL(src);
         resolve(url);
       };
-      const timer = setTimeout(() => finish(null), 6000);
+      const timer = setTimeout(() => finish(null), 12000);
       const draw = () => {
         try {
           const w = v.videoWidth, h = v.videoHeight;
@@ -1004,7 +1015,7 @@ const Upload = (function () {
         } catch (_) { finish(null); }
       };
       v.addEventListener('loadedmetadata', () => {
-        const t = isFinite(v.duration) && v.duration > 0 ? Math.min(0.5, v.duration / 2) : 0.1;
+        const t = isFinite(v.duration) && v.duration > 0 ? Math.min(0.1, v.duration / 2) : 0.1;
         try { v.currentTime = t; } catch (_) { finish(null); }
       }, { once: true });
       v.addEventListener('seeked', () => requestAnimationFrame(draw), { once: true });
@@ -1018,11 +1029,11 @@ const Upload = (function () {
   let videoRunning = 0;
 
   function pumpThumbs() {
-    // 写真は2枚ずつ　動画はメモリを多く使うので1本ずつ
+    // 写真も動画も2つずつ並行して作る
     for (let i = 0; i < thumbQueue.length && thumbRunning < 2; ) {
       const item = thumbQueue[i];
       const vid = isVideo(item.file);
-      if (vid && videoRunning >= 1) { i++; continue; }
+      if (vid && videoRunning >= 2) { i++; continue; }
       thumbQueue.splice(i, 1);
       thumbRunning++;
       if (vid) videoRunning++;
@@ -1056,9 +1067,10 @@ const Upload = (function () {
     const f = item.file;
     const frag = document.createDocumentFragment();
     if (isVideo(f)) {
-      const ph = span('動画', 'ph');
+      const ph = span('動画', 'ph loading');
       ph._load = () => requestThumb(item, () => {
-        if (item.thumb === 'none') return;
+        ph.classList.remove('loading');
+        if (item.thumb === 'none') { ph.classList.add('play'); return; }
         const img = document.createElement('img');
         img.className = 'thumb'; img.alt = '';
         img.src = item.thumb;
@@ -2299,12 +2311,27 @@ const Viewer = (function () {
     stage.textContent = '';
     Zoom.reset();
     if (p.type === 'video') {
-      const f = document.createElement('iframe');
-      f.src = 'https://drive.google.com/file/d/' + encodeURIComponent(p.id) + '/preview';
-      f.allow = 'autoplay; fullscreen';
-      f.allowFullscreen = true;
-      f.title = '動画';
-      stage.appendChild(f);
+      // Drive のプレビューは変換が終わるまで数分見られないので
+      // 元のファイルをそのまま再生する　だめなときだけ Drive のプレビューに切り替える
+      const iframe = () => {
+        const f = document.createElement('iframe');
+        f.src = 'https://drive.google.com/file/d/' + encodeURIComponent(p.id) + '/preview';
+        f.allow = 'autoplay; fullscreen';
+        f.allowFullscreen = true;
+        f.title = '動画';
+        return f;
+      };
+      if (DRIVE_API_KEY) {
+        const v = document.createElement('video');
+        v.controls = true; v.playsInline = true; v.preload = 'metadata';
+        v.setAttribute('playsinline', '');
+        v.addEventListener('error', () => { if (v.isConnected) v.replaceWith(iframe()); }, { once: true });
+        v.src = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(p.id) +
+          '?alt=media&supportsAllDrives=true&key=' + encodeURIComponent(DRIVE_API_KEY) + '#t=0.1';
+        stage.appendChild(v);
+      } else {
+        stage.appendChild(iframe());
+      }
     } else {
       const img = document.createElement('img');
       img.alt = '';
