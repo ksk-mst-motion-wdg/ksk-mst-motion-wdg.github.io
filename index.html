@@ -222,6 +222,8 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
   .error { text-align: center; font-size: 14px; color: var(--ng); margin: 12px 0 0; }
   .error:empty { display: none; }
   #send { margin-top: 24px; }
+  .vnote { text-align: center; margin: 18px 0 0; font-size: 12.5px; line-height: 1.9; color: var(--ink-soft); }
+  .vnote .vh { display: block; color: var(--gold); font-size: 15px; letter-spacing: .08em; }
   .note { text-align: center; font-size: 12.5px; color: var(--ink-soft); margin: 14px 0 0; opacity: .85; }
 
   /* ---------- みんなの写真 ---------- */
@@ -502,13 +504,14 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
             <input id="fileInput" type="file" accept="image/*,image/heic,image/heif,video/*,video/quicktime,video/mp4" multiple>
           </label>
 
+          <p class="vnote"><span class="vh">動画は少しお時間がかかります</span>ご自宅などでゆっくり<br>シェアしていただくのもおすすめです</p>
+
           <ul class="picks" id="picks"></ul>
           <p class="pickinfo" id="pickInfo"></p>
 
           <button class="btn" id="send" type="button" disabled>シェアする</button>
           <p class="error" id="upError"></p>
-          <p class="note">シェアが完了するまで　この画面を開いたままにしてください</p>
-          <p class="note">動画は少しお時間がかかります<br>ご自宅などでゆっくりシェアしていただくのもおすすめです</p>
+          <p class="note">シェアが完了するまで<br>この画面を開いたままにしてください</p>
         </div>
 
         <div id="upDone" class="msg" hidden>
