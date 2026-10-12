@@ -488,7 +488,7 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
           <label class="picker" id="picker">
             <span class="btn line">写真や動画をえらぶ</span>
             <span class="hint">共有のGoogleドライブに保存されます</span>
-            <input id="fileInput" type="file" accept="image/*,video/*" multiple>
+            <input id="fileInput" type="file" accept="image/*,image/heic,image/heif,video/*,video/quicktime,video/mp4" multiple>
           </label>
 
           <ul class="picks" id="picks"></ul>
