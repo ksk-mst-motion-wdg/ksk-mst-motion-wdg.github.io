@@ -237,8 +237,9 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
     padding: 0; border: 0; border-radius: 3px; overflow: hidden;
     background: rgba(255, 255, 255, .06); cursor: pointer;
   }
-  .tile img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .4s; }
-  .tile img.ok { opacity: 1; }
+  .tile img, .tile video { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .4s; }
+  .tile img.ok, .tile video.ok { opacity: 1; }
+  .tile video { position: absolute; inset: 0; pointer-events: none; background: transparent; }
   .tile .ph { position: absolute; inset: 0; }
   .headbtns { display: flex; gap: 8px; }
   #albumHead { justify-content: flex-end; }
@@ -257,7 +258,6 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
   .ranking .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ranking .ct { font-size: 13.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
   .lead .hint { font-size: 12.5px; opacity: .8; margin-top: 4px; }
-  .album.selecting .tile.video { opacity: .3; cursor: default; }
   .tile .check {
     position: absolute; right: 6px; top: 6px;
     width: 24px; height: 24px; border-radius: 50%;
@@ -265,7 +265,7 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
     display: none; place-items: center;
     font-size: 13px; line-height: 1; color: var(--gold-ink);
   }
-  .album.selecting .tile:not(.video) .check { display: grid; }
+  .album.selecting .tile .check { display: grid; }
   .tile.sel .check { background: var(--gold); border-color: var(--gold); }
   .tile.sel .check::before { content: "✓"; }
   .tile.sel::after { content: ""; position: absolute; inset: 0; border: 2px solid var(--gold); border-radius: 3px; pointer-events: none; }
@@ -538,7 +538,7 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
           </span>
         </div>
         <div class="albumhead" id="selectHead" hidden>
-          <span class="count">保存する写真をタップ</span>
+          <span class="count">保存したいものをタップ</span>
           <button class="btn line small" type="button" id="selectEnd">選択解除</button>
         </div>
         <div class="album" id="album"></div>
@@ -585,7 +585,7 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
 
 <!-- えらんで保存のときの下のバー -->
 <div class="selectbar" id="selectBar" hidden>
-  <span id="selectCount">0枚</span>
+  <span id="selectCount">0件</span>
   <button class="btn line small" type="button" id="selectCancel">選択解除</button>
   <button class="btn small" type="button" id="selectSave" disabled>保存する</button>
 </div>
@@ -821,7 +821,7 @@ const thumbUrl = (id, w) => 'https://lh3.googleusercontent.com/d/' + encodeURICo
 const thumbUrlAlt = (id, w) => 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(id) + '&sz=w' + w;
 /* lh3 が使えない環境では毎回失敗してから切り替えるのは無駄なので　一度失敗したら以後は最初から Drive を使う */
 let lh3Ok = null;
-function setThumb(img, id, w, onFail) {
+function setThumb(img, id, w, onFail, isVideo) {
   const t0 = performance.now();
   const done = src => { if (DBG.on) DBG.thumb(src, performance.now() - t0); };
   if (lh3Ok === false) {
@@ -832,7 +832,8 @@ function setThumb(img, id, w, onFail) {
   }
   img.onload = chain(img.onload, () => { lh3Ok = true; done('lh3'); });
   img.onerror = () => {
-    if (lh3Ok !== true) lh3Ok = false;
+    // 変換中の動画はどちらでも出ないので　それで判断を変えない
+    if (lh3Ok !== true && !isVideo) lh3Ok = false;
     img.onload = chain(null, () => done('drive(切替)'));
     img.onerror = onFail;
     img.src = thumbUrlAlt(id, w);
@@ -1667,17 +1668,16 @@ const Album = (function () {
   }
 
   function toggle(p, el) {
-    if (p.type === 'video') return;
     if (selected.has(p.id)) { selected.delete(p.id); el.classList.remove('sel'); }
     else {
-      if (selected.size >= Saver.MAX) { $('selectCount').textContent = '一度に' + Saver.MAX + '枚までです'; return; }
+      if (selected.size >= Saver.MAX) { $('selectCount').textContent = '一度に' + Saver.MAX + '件までです'; return; }
       selected.add(p.id); el.classList.add('sel');
     }
     updateSelect();
   }
 
   function updateSelect() {
-    $('selectCount').textContent = selected.size + '枚';
+    $('selectCount').textContent = selected.size + '件';
     $('selectSave').disabled = selected.size === 0;
   }
 
@@ -1704,7 +1704,7 @@ const Album = (function () {
   function startDrag(tile) {
     const id = tile.dataset.id;
     const p = photos.find(x => x.id === id);
-    if (!p || p.type === 'video') { press = null; return; }
+    if (!p) { press = null; return; }
     if (!selecting) setSelecting(true);
     const idx = tileIndex(tile);
     drag = { anchor: idx, last: -1, base: new Set(selected), add: !selected.has(id) };
@@ -1722,7 +1722,6 @@ const Album = (function () {
     let limited = false;
     for (let i = 0; i < tiles.length; i++) {
       const el = tiles[i];
-      if (el.classList.contains('video')) continue;
       const id = el.dataset.id;
       let want = i >= lo && i <= hi ? drag.add : drag.base.has(id);
       if (want && !selected.has(id) && selected.size >= Saver.MAX) { want = false; limited = true; }
@@ -1730,7 +1729,7 @@ const Album = (function () {
       el.classList.toggle('sel', want);
     }
     updateSelect();
-    if (limited) $('selectCount').textContent = '一度に' + Saver.MAX + '枚までです';
+    if (limited) $('selectCount').textContent = '一度に' + Saver.MAX + '件までです';
   }
 
   function updateDrag() {
@@ -1818,6 +1817,30 @@ const Album = (function () {
     $('albumEmpty').hidden = !loaded || photos.length > 0;
   }
 
+  /* ドライブが動画を変換し終わるまではサムネが無いので
+     元の動画の最初の1コマをそのまま表示する（画面に近づいてから読み込む） */
+  const frameIO = window.IntersectionObserver ? new IntersectionObserver(es => es.forEach(e => {
+    if (!e.isIntersecting) return;
+    frameIO.unobserve(e.target);
+    e.target._load();
+  }), { rootMargin: '200px 0px' }) : null;
+
+  function videoFrame(id) {
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'metadata';
+    v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
+    v.addEventListener('loadedmetadata', () => { try { if (v.currentTime < 0.05) v.currentTime = 0.1; } catch (_) {} }, { once: true });
+    v.addEventListener('loadeddata', () => v.classList.add('ok'), { once: true });
+    v.addEventListener('seeked', () => v.classList.add('ok'), { once: true });
+    v.addEventListener('error', () => { if (v.isConnected) v.replaceWith(span('', 'ph play')); }, { once: true });
+    v._load = () => {
+      v.src = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) +
+        '?alt=media&supportsAllDrives=true&key=' + encodeURIComponent(DRIVE_API_KEY) + '#t=0.1';
+    };
+    if (frameIO) { requestAnimationFrame(() => frameIO.observe(v)); } else v._load();
+    return v;
+  }
+
   function makeTile(p) {
     const b = document.createElement('button');
     b.type = 'button';
@@ -1826,7 +1849,10 @@ const Album = (function () {
     const img = document.createElement('img');
     img.alt = ''; img.loading = 'lazy'; img.decoding = 'async';
     img.onload = () => img.classList.add('ok');
-    setThumb(img, p.id, 400, () => { img.remove(); b.insertBefore(span(p.type === 'video' ? '動画' : '準備中', 'ph'), b.firstChild); });
+    setThumb(img, p.id, 400, () => {
+      if (p.type === 'video' && DRIVE_API_KEY) { img.replaceWith(videoFrame(p.id)); return; }
+      img.remove(); b.insertBefore(span(p.type === 'video' ? '動画' : '準備中', 'ph'), b.firstChild);
+    }, p.type === 'video');
     b.appendChild(img);
     if (p.type === 'video') { b.classList.add('video'); b.appendChild(span('動画', 'vbadge')); }
     b.appendChild(span('', 'check'));
@@ -2051,7 +2077,20 @@ const Saver = (function () {
     return new File([blob], name, { type: type });
   }
 
+  // 動画は元のファイルをそのまま保存する（変換待ちも不要）
+  async function fetchVideo(p, n) {
+    const res = await fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(p.id) +
+      '?alt=media&supportsAllDrives=true&key=' + encodeURIComponent(DRIVE_API_KEY), { credentials: 'omit' });
+    if (!res.ok) throw new Error('status ' + res.status);
+    const blob = await res.blob();
+    let type = blob.type || p.mime || '';
+    if (!/^video\//.test(type)) type = /\.mp4$/i.test(p.name || '') ? 'video/mp4' : 'video/quicktime';
+    const name = p.name || ('Motion_' + (p.guest || 'movie') + '_' + n + (type === 'video/mp4' ? '.mp4' : '.mov'));
+    return new File([blob], name, { type: type });
+  }
+
   async function fetchOne(p, n) {
+    if (p.type === 'video') return { file: await fetchVideo(p, n), via: 'video' };
     if (originalOk && !isHeic(p.mime, p.name)) {
       try {
         const f = await fetchOriginal(p, n);
@@ -2077,7 +2116,7 @@ const Saver = (function () {
     const my = ++run;
     onDone = done || null;
     files = [];
-    list = list.filter(p => p.type !== 'video').slice(0, MAX);
+    list = list.slice(0, MAX);
     $('saverTitle').textContent = '保存の準備をしています';
     $('saverText').textContent = '0 / ' + list.length;
     $('saverNote').textContent = '';
@@ -2111,7 +2150,7 @@ const Saver = (function () {
     if (my !== run) return;
 
     files = results.filter(Boolean);
-    $('saverNote').textContent = failed ? failed + '枚は保存できませんでした' : '';
+    $('saverNote').textContent = failed ? failed + '件は保存できませんでした' : '';
     if (!files.length) {
       $('saverTitle').textContent = '保存できませんでした';
       $('saverText').textContent = '時間をおいてお試しください';
@@ -2119,8 +2158,10 @@ const Saver = (function () {
       return;
     }
     if (!canShareFiles(files)) { await download(); return; }   // iPhone 以外はそのままダウンロード
-    $('saverTitle').textContent = files.length + '枚の準備ができました';
-    $('saverText').textContent = canShareFiles(files) ? '次の画面で「画像を保存」をえらんでください' : '';
+    $('saverTitle').textContent = files.length + '件の準備ができました';
+    const hasVideo = files.some(f => /^video\//.test(f.type));
+    $('saverText').textContent = !canShareFiles(files) ? '' :
+      hasVideo ? '次の画面で「ビデオを保存」や「項目を保存」をえらんでください' : '次の画面で「画像を保存」をえらんでください';
     $('saverGo').textContent = canShareFiles(files) ? '写真アプリに保存する' : '保存する';
     $('saverGo').hidden = false;
     $('saverGo').focus();
@@ -2346,7 +2387,7 @@ const Viewer = (function () {
     $('viewerFrom').textContent = p.guest ? p.guest + 'さんより' : '';
     const save = $('viewerSave');
     save.href = 'https://drive.google.com/uc?export=download&id=' + encodeURIComponent(p.id);
-    save.onclick = p.type === 'video' ? null : e => { e.preventDefault(); Saver.start([p]); };
+    save.onclick = p.type === 'video' && !DRIVE_API_KEY ? null : e => { e.preventDefault(); Saver.start([p]); };
     $('viewer').classList.toggle('video', p.type === 'video');
     $('viewerPos').textContent = (index + 1) + ' / ' + Album.size() + (Album.hasMore() ? '+' : '');
     $('viewerPrev').disabled = index <= 0;
