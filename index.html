@@ -508,6 +508,7 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
           <button class="btn" id="send" type="button" disabled>シェアする</button>
           <p class="error" id="upError"></p>
           <p class="note">シェアが完了するまで　この画面を開いたままにしてください</p>
+          <p class="note">動画は少しお時間がかかります<br>ご自宅などでゆっくりシェアしていただくのもおすすめです</p>
         </div>
 
         <div id="upDone" class="msg" hidden>
@@ -1479,9 +1480,25 @@ const Upload = (function () {
     if (st.done > 0 || st.frac > 0) $('progLeft').textContent = leftText(st.left);
   }
 
+  /* シェア中は画面が自動で消えないようにする（消えるとブラウザが送信を止めてしまう） */
+  let wake = null;
+  async function keepAwake(on) {
+    try {
+      if (on && !wake && navigator.wakeLock) {
+        wake = await navigator.wakeLock.request('screen');
+        wake.addEventListener('release', () => { wake = null; });
+      } else if (!on && wake) {
+        await wake.release(); wake = null;
+      }
+    } catch (_) { wake = null; }
+  }
+  // ほかのアプリから戻ってきたときにかけ直す
+  document.addEventListener('visibilitychange', () => { if (busy && document.visibilityState === 'visible') keepAwake(true); });
+
   async function sendAll() {
     if (busy) return;
     busy = true;
+    keepAwake(true);
     sendStart = performance.now();
     Sky.calm(true);
     $('send').disabled = true;
@@ -1533,6 +1550,7 @@ const Upload = (function () {
     showProgress(false);
     Sky.calm(false);
     busy = false;
+    keepAwake(false);
     refresh();
 
     const doneCount = items.filter(i => i.status === 'done').length;
