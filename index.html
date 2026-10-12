@@ -564,7 +564,7 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
     <p>シェアした写真や動画は<br>すぐに「みんなの写真」に並びます</p>
     <p class="soft">式にご参加の皆さまが見られます</p>
     <div class="caution">
-      <p class="strong">一度シェアすると　ご自身では取り下げられません</p>
+      <p class="strong">一度シェアすると<br>ご自身では取り下げられません</p>
       <p>どうしても取り下げたいときは<br>新郎新婦にご連絡ください<br>あとで対応いたします</p>
     </div>
     <button class="btn" type="button" id="confirmOk">シェアする</button>
@@ -975,15 +975,63 @@ const Upload = (function () {
     });
   }
 
+  // 動画は最初のほうの1コマを切り出して縮める
+  function shrinkVideo(item) {
+    return new Promise(resolve => {
+      const src = URL.createObjectURL(item.file);
+      const v = document.createElement('video');
+      v.muted = true; v.playsInline = true; v.preload = 'auto';
+      v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
+      v.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+      let done = false;
+      const finish = url => {
+        if (done) return; done = true;
+        clearTimeout(timer);
+        v.removeAttribute('src'); try { v.load(); } catch (_) {}
+        v.remove(); URL.revokeObjectURL(src);
+        resolve(url);
+      };
+      const timer = setTimeout(() => finish(null), 6000);
+      const draw = () => {
+        try {
+          const w = v.videoWidth, h = v.videoHeight;
+          if (!w || !h) return finish(null);
+          const s = Math.min(w, h);
+          const c = document.createElement('canvas');
+          c.width = THUMB; c.height = THUMB;
+          c.getContext('2d').drawImage(v, (w - s) / 2, (h - s) / 2, s, s, 0, 0, THUMB, THUMB);
+          c.toBlob(b => { c.width = c.height = 0; finish(b ? URL.createObjectURL(b) : null); }, 'image/jpeg', 0.8);
+        } catch (_) { finish(null); }
+      };
+      v.addEventListener('loadedmetadata', () => {
+        const t = isFinite(v.duration) && v.duration > 0 ? Math.min(0.5, v.duration / 2) : 0.1;
+        try { v.currentTime = t; } catch (_) { finish(null); }
+      }, { once: true });
+      v.addEventListener('seeked', () => requestAnimationFrame(draw), { once: true });
+      v.addEventListener('error', () => finish(null), { once: true });
+      document.body.appendChild(v);
+      v.src = src;
+    });
+  }
+
+  const isVideo = f => f.type.indexOf('video/') === 0 || /\.(mov|mp4|m4v)$/i.test(f.name);
+  let videoRunning = 0;
+
   function pumpThumbs() {
-    while (thumbRunning < 2 && thumbQueue.length) {
-      const item = thumbQueue.shift();
+    // 写真は2枚ずつ　動画はメモリを多く使うので1本ずつ
+    for (let i = 0; i < thumbQueue.length && thumbRunning < 2; ) {
+      const item = thumbQueue[i];
+      const vid = isVideo(item.file);
+      if (vid && videoRunning >= 1) { i++; continue; }
+      thumbQueue.splice(i, 1);
       thumbRunning++;
-      shrink(item).then(url => {
+      if (vid) videoRunning++;
+      (vid ? shrinkVideo(item) : shrink(item)).then(url => {
         item.thumb = url || 'none';
         (item.thumbWaiters || []).forEach(fn => fn());
         item.thumbWaiters = [];
         thumbRunning--;
+        if (vid) videoRunning--;
         pumpThumbs();
       });
     }
@@ -1007,8 +1055,17 @@ const Upload = (function () {
   function makeThumb(item) {
     const f = item.file;
     const frag = document.createDocumentFragment();
-    if (f.type.indexOf('video/') === 0) {
-      frag.appendChild(span('動画', 'ph'));
+    if (isVideo(f)) {
+      const ph = span('動画', 'ph');
+      ph._load = () => requestThumb(item, () => {
+        if (item.thumb === 'none') return;
+        const img = document.createElement('img');
+        img.className = 'thumb'; img.alt = '';
+        img.src = item.thumb;
+        ph.replaceWith(img);
+      });
+      if (io) io.observe(ph); else ph._load();
+      frag.appendChild(ph);
       frag.appendChild(span('動画', 'vbadge'));
     } else if (f.type.indexOf('image/') === 0 || /\.(heic|heif)$/i.test(f.name)) {
       const img = document.createElement('img');
