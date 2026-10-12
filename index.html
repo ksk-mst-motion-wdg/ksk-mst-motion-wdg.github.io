@@ -897,7 +897,7 @@ window.addEventListener('hashchange', () => { if (!document.documentElement.clas
 const Upload = (function () {
   // どちらも 256KB の倍数にすること
   const RELAY_CHUNK = 8 * 1024 * 1024;    // GAS 中継のときの分割サイズ
-  const DIRECT_CHUNK = 16 * 1024 * 1024;  // Drive に直接送るときの分割サイズ（失敗したときのやり直しを小さくする）
+  const DIRECT_CHUNK = 64 * 1024 * 1024;  // Drive に直接送るときの分割サイズ（大きいほど往復が減って速い　途切れても届いた所から再開できる）
   const RELAY_MAX = 50 * 1024 * 1024;     // これより大きいファイルは中継に切り替えない
   const MAX_RETRY = 6;
   // 小さい写真でも Drive 側の保存待ちが1枚3秒ほどあるので　たくさん同時に送って待ち時間を重ねる
@@ -1390,6 +1390,7 @@ const Upload = (function () {
           }
           break;
         } catch (e) {
+          dlog(file.name.slice(-18) + '  やり直し' + (attempt + 1) + '  ' + errText(e));
           if (direct && !directConfirmed && e.status === 0 && attempt >= 1 && file.size <= RELAY_MAX) {
             // まだ一度も直接送れていない端末で　2回続けて通信そのものに失敗した（CORS など）
             // この端末からは直接送れないとみなして中継に切り替える
@@ -1403,7 +1404,11 @@ const Upload = (function () {
           try {
             const status = await api('getStatus', { uploadId: uploadId });
             if (status.done || status.next !== offset) { result = status; break; }
-          } catch (_) { /* 次の試行へ */ }
+          } catch (se) {
+            dlog('  状況確認  ' + errText(se));
+            // Drive がはっきり断っている（容量不足など）ときは　何度やっても同じなので止める
+            if (/（4\d\d）/.test(errText(se))) throw se;
+          }
         }
       }
 
