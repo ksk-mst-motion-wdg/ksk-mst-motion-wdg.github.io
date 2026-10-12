@@ -897,8 +897,9 @@ window.addEventListener('hashchange', () => { if (!document.documentElement.clas
 const Upload = (function () {
   // どちらも 256KB の倍数にすること
   const RELAY_CHUNK = 8 * 1024 * 1024;    // GAS 中継のときの分割サイズ
-  const DIRECT_CHUNK = 32 * 1024 * 1024;  // Drive に直接送るときの分割サイズ
-  const MAX_RETRY = 4;
+  const DIRECT_CHUNK = 16 * 1024 * 1024;  // Drive に直接送るときの分割サイズ（失敗したときのやり直しを小さくする）
+  const RELAY_MAX = 50 * 1024 * 1024;     // これより大きいファイルは中継に切り替えない
+  const MAX_RETRY = 6;
   // 小さい写真でも Drive 側の保存待ちが1枚3秒ほどあるので　たくさん同時に送って待ち時間を重ねる
   // Drive には1秒あたりに保存できる数の上限があり　多すぎると失敗が増える
   const PARALLEL = 4;                     // 同時に送るファイル数
@@ -1126,6 +1127,12 @@ const Upload = (function () {
       li.append(shade, bar, state, rm);
       item.el = li;
       item.ui = { bar: bar, rm: rm };
+      // ！をタップすると理由を出す
+      li.addEventListener('click', e => {
+        if (item.status !== 'err' || e.target === rm) return;
+        $('upError').textContent = item.message || 'シェアできませんでした';
+        $('upError').scrollIntoView({ block: 'center', behavior: 'smooth' });
+      });
       $('picks').appendChild(li);
       items.push(item);
     }
@@ -1367,7 +1374,7 @@ const Upload = (function () {
     while (true) {
       let result = null;
       for (let attempt = 0; ; attempt++) {
-        const direct = mode === 'direct' && !!uploadUrl;
+        const direct = (mode === 'direct' || file.size > RELAY_MAX) && !!uploadUrl;
         const end = Math.min(offset + (direct ? DIRECT_CHUNK : RELAY_CHUNK), file.size);
         try {
           if (direct) {
@@ -1383,9 +1390,10 @@ const Upload = (function () {
           }
           break;
         } catch (e) {
-          if (direct && !directConfirmed && e.status === 0 && attempt === 0) {
-            // 最初の1枚が通信そのものに失敗した（CORS など）　この端末からは直接送れないので中継に切り替える
-            // サーバーからのエラー（混雑など）のときは切り替えずに　少し待ってやり直す
+          if (direct && !directConfirmed && e.status === 0 && attempt >= 1 && file.size <= RELAY_MAX) {
+            // まだ一度も直接送れていない端末で　2回続けて通信そのものに失敗した（CORS など）
+            // この端末からは直接送れないとみなして中継に切り替える
+            // 大きな動画は中継だと送りきれないので切り替えない　一時的な電波の乱れでも切り替えない
             mode = 'relay';
           } else {
             if (attempt >= MAX_RETRY) throw e;
@@ -1422,16 +1430,16 @@ const Upload = (function () {
     const queued = items.filter(i => i.status === 'up' || i.status === 'wait' || i.status === 'done');
     const total = queued.length;
     const done = queued.filter(i => i.status === 'done').length;
-    // 1枚ごとに Drive の保存待ちがあるので　枚数ベースで進める（送信中の写真は途中まで）
-    const frac = total ? queued.reduce((s, i) => s + (i.status === 'done' ? 1 : (i.progress || 0) * 0.9), 0) / total : 0;
+    // 進み具合は送ったデータ量で計る（1件ごとの Drive の保存待ちは 2MB 分として足す）
+    const OVER = 2 * 1024 * 1024;
+    const prog = i => i.status === 'done' ? 1 : (i.progress || 0) * 0.97;
+    const all = queued.reduce((s, i) => s + i.file.size + OVER, 0);
+    const sent = queued.reduce((s, i) => s + (i.file.size + OVER) * prog(i), 0);
+    const frac = all ? sent / all : 0;
     let left = null;
     const elapsed = (performance.now() - sendStart) / 1000;
-    if (elapsed > 4 && done > 0) {
-      const bytes = queued.reduce((s, i) => s + i.file.size * (i.status === 'done' ? 1 : i.progress || 0), 0);
-      const all = queued.reduce((s, i) => s + i.file.size, 0);
-      const byCount = elapsed / done * (total - done);
-      const byBytes = bytes > 0 ? elapsed / bytes * (all - bytes) : byCount;
-      left = Math.max(byCount, byBytes);
+    if (elapsed > 6 && sent > 0 && (done > 0 || elapsed > 10)) {
+      left = elapsed / sent * (all - sent);
     }
     return { total: total, done: done, frac: frac, left: left };
   }
@@ -1480,7 +1488,8 @@ const Upload = (function () {
 
     let failed = 0;
     let stop = false;
-    const queue = sendable();
+    // 小さいもの（写真）から先に送る　大きな動画を待たずに件数が進み　すぐ「みんなの写真」に並ぶ
+    const queue = sendable().sort((a, b) => a.file.size - b.file.size);
     const who = currentWho();
     // 前回失敗したものは送り先を作り直す
     queue.forEach(i => { if (i.status === 'err') clearSession(i); i.status = 'wait'; i.progress = 0; });
