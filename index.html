@@ -774,6 +774,53 @@ const Sky = (function () {
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/* 動画（File や Blob）の最初のほうの1コマを　正方形の JPEG にして返す　だめなら null */
+function grabFrame(blob, size) {
+  return new Promise(resolve => {
+    const src = URL.createObjectURL(blob);
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'metadata';
+    v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
+    v.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+    let done = false;
+    const finish = b => {
+      if (done) return; done = true;
+      clearTimeout(timer);
+      v.removeAttribute('src'); try { v.load(); } catch (_) {}
+      v.remove(); URL.revokeObjectURL(src);
+      resolve(b || null);
+    };
+    const timer = setTimeout(() => finish(null), 12000);
+    const draw = () => {
+      try {
+        const w = v.videoWidth, h = v.videoHeight;
+        if (!w || !h) return finish(null);
+        const s = Math.min(w, h);
+        const c = document.createElement('canvas');
+        c.width = size; c.height = size;
+        c.getContext('2d').drawImage(v, (w - s) / 2, (h - s) / 2, s, s, 0, 0, size, size);
+        c.toBlob(b => { c.width = c.height = 0; finish(b); }, 'image/jpeg', 0.8);
+      } catch (_) { finish(null); }
+    };
+    v.addEventListener('loadedmetadata', () => {
+      const t = isFinite(v.duration) && v.duration > 0 ? Math.min(0.1, v.duration / 2) : 0.1;
+      try { v.currentTime = t; } catch (_) { finish(null); }
+    }, { once: true });
+    v.addEventListener('seeked', () => requestAnimationFrame(draw), { once: true });
+    v.addEventListener('error', () => finish(null), { once: true });
+    document.body.appendChild(v);
+    v.src = src;
+  });
+}
+function blobToB64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
 /* GAS を呼ぶ　返事がないまま待ち続けないよう時間切れを設ける */
 async function api(action, params, timeoutMs) {
   if (!/^https:\/\//.test(API_URL)) throw new Error('準備中です');
@@ -995,41 +1042,9 @@ const Upload = (function () {
 
   // 動画は最初のほうの1コマを切り出して縮める
   function shrinkVideo(item) {
-    return new Promise(resolve => {
-      const src = URL.createObjectURL(item.file);
-      const v = document.createElement('video');
-      v.muted = true; v.playsInline = true; v.preload = 'metadata';
-      v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
-      v.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
-      let done = false;
-      const finish = url => {
-        if (done) return; done = true;
-        clearTimeout(timer);
-        v.removeAttribute('src'); try { v.load(); } catch (_) {}
-        v.remove(); URL.revokeObjectURL(src);
-        resolve(url);
-      };
-      const timer = setTimeout(() => finish(null), 12000);
-      const draw = () => {
-        try {
-          const w = v.videoWidth, h = v.videoHeight;
-          if (!w || !h) return finish(null);
-          // みんなの写真でも使うので　写真より少し大きめに作る
-          const s = Math.min(w, h), T = VTHUMB;
-          const c = document.createElement('canvas');
-          c.width = T; c.height = T;
-          c.getContext('2d').drawImage(v, (w - s) / 2, (h - s) / 2, s, s, 0, 0, T, T);
-          c.toBlob(b => { c.width = c.height = 0; item.thumbBlob = b || null; finish(b ? URL.createObjectURL(b) : null); }, 'image/jpeg', 0.8);
-        } catch (_) { finish(null); }
-      };
-      v.addEventListener('loadedmetadata', () => {
-        const t = isFinite(v.duration) && v.duration > 0 ? Math.min(0.1, v.duration / 2) : 0.1;
-        try { v.currentTime = t; } catch (_) { finish(null); }
-      }, { once: true });
-      v.addEventListener('seeked', () => requestAnimationFrame(draw), { once: true });
-      v.addEventListener('error', () => finish(null), { once: true });
-      document.body.appendChild(v);
-      v.src = src;
+    return grabFrame(item.file, VTHUMB).then(b => {
+      item.thumbBlob = b || null;
+      return b ? URL.createObjectURL(b) : null;
     });
   }
 
@@ -1758,7 +1773,7 @@ const Album = (function () {
       q: "'" + FOLDER_ID + "' in parents and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
       orderBy: 'createdTime desc',
       pageSize: '60',
-      fields: 'nextPageToken,files(id,name,mimeType,thumbnailLink)',
+      fields: 'nextPageToken,files(id,name,mimeType,size,thumbnailLink)',
       supportsAllDrives: 'true',
       includeItemsFromAllDrives: 'true',
       key: DRIVE_API_KEY,
@@ -1775,6 +1790,7 @@ const Album = (function () {
         name: String(f.name || '').replace(/^\d{8}-\d{6}_/, ''),
         mime: f.mimeType,
         thumbLink: f.thumbnailLink || '',
+        size: Number(f.size) || 0,
       })),
       next: data.nextPageToken || null,
       via: 'api',
@@ -1972,6 +1988,7 @@ const Album = (function () {
       img.remove();
       if (!b.querySelector('.ph')) b.insertBefore(span('準備中', 'ph prep'), b.firstChild);
       b.classList.add('nothumb');
+      backfill(p);
     };
     const fromDrive = () => {
       const link = p.thumbLink && !p.thumbLinkFailed ? p.thumbLink.replace(/=s\d+$/, '=s400') : '';
@@ -1985,6 +2002,54 @@ const Album = (function () {
     const own = Thumbs.get(p.id);
     if (own) { usedOwn = true; setThumb(img, own, 400, fromDrive, true); }
     else fromDrive();
+  }
+
+  /* サムネが無い動画（サムネを預ける仕組みより前に送られたものなど）は
+     元の動画を読み込んで1コマ作り　その場で表示しつつ GAS に預ける
+     一度預ければ　ほかの人の画面にもすぐ出る　大きすぎる動画はやらない */
+  const BACKFILL_MAX = 80 * 1024 * 1024;
+  const backfillQueue = [];
+  const backfillTried = new Set();
+  let backfillRunning = false;
+  function backfill(p) {
+    if (!DRIVE_API_KEY || backfillTried.has(p.id) || (p.size && p.size > BACKFILL_MAX)) return;
+    backfillTried.add(p.id);
+    backfillQueue.push(p);
+    runBackfill();
+  }
+  async function runBackfill() {
+    if (backfillRunning) return;
+    backfillRunning = true;
+    while (backfillQueue.length) {
+      const p = backfillQueue.shift();
+      if (Thumbs.get(p.id)) continue;
+      try {
+        const res = await fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(p.id) +
+          '?alt=media&supportsAllDrives=true&key=' + encodeURIComponent(DRIVE_API_KEY), { credentials: 'omit' });
+        if (!res.ok) throw new Error('status ' + res.status);
+        let blob = await res.blob();
+        let frame = await grabFrame(blob, 480);
+        blob = null;
+        if (!frame) throw new Error('コマを取れませんでした');
+        const tile = albumEl.querySelector('.tile.nothumb[data-id="' + p.id + '"]');
+        if (tile) {
+          tile.classList.remove('nothumb');
+          const ph = tile.querySelector('.ph'); if (ph) ph.remove();
+          const img = document.createElement('img');
+          img.alt = ''; img.className = 'ok';
+          img.src = URL.createObjectURL(frame);
+          tile.insertBefore(img, tile.firstChild);
+        }
+        api('saveThumb', { fileId: p.id, data: await blobToB64(frame) })
+          .then(() => Thumbs.added())
+          .catch(e => DBG.log('albumDebug', 'サムネを預けられませんでした ' + errText(e)));
+        frame = null;
+      } catch (e) {
+        DBG.log('albumDebug', '動画のサムネ作りに失敗 ' + errText(e));
+      }
+      await sleep(300);
+    }
+    backfillRunning = false;
   }
 
   // 預けたサムネが新しく見つかったら　「準備中」のマスを差し替える
