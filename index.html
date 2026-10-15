@@ -667,7 +667,35 @@ const FOLDER_ID = '1ep4soi5PT5DipmC1MCXOKjwzoGmvNBxn';
 // Google ドライブのアプリから動画を直接入れてもらうフォルダ（保存先フォルダの中に作る　空なら案内を出さない）
 const VIDEO_FOLDER_ID = '1CpMshp2SWaQrdyGDCf2Y_7GH3F9HUVXA';
 // 一覧やランキングで読むフォルダ
-const ALL_FOLDERS_Q = '(' + [FOLDER_ID, VIDEO_FOLDER_ID].filter(Boolean).map(id => "'" + id + "' in parents").join(' or ') + ')';
+const foldersQ = both => '(' + [FOLDER_ID, both ? VIDEO_FOLDER_ID : ''].filter(Boolean).map(id => "'" + id + "' in parents").join(' or ') + ')';
+/* Drive に直接一覧を聞く
+   動画フォルダの共有設定がまだ・持ち主の名前が読めない　などで断られたら　聞き方を控えめにしてやり直す */
+const LIST_WAYS = [{ both: true, owners: true }, { both: true, owners: false }, { both: false, owners: false }];
+let listWay = 0;
+async function driveFiles(tag, q, fields, extra) {
+  let last = '';
+  for (let i = listWay; i < LIST_WAYS.length; i++) {
+    const w = LIST_WAYS[i];
+    const params = new URLSearchParams(Object.assign({
+      q: foldersQ(w.both) + q,
+      fields: w.owners ? fields : fields.replace(',owners(displayName)', ''),
+      supportsAllDrives: 'true',
+      includeItemsFromAllDrives: 'true',
+      key: DRIVE_API_KEY,
+    }, extra || {}));
+    const res = await fetch('https://www.googleapis.com/drive/v3/files?' + params, { credentials: 'omit' });
+    if (res.ok) {
+      if (i !== listWay) { listWay = i; DBG.log('albumDebug', '一覧の聞き方を変更 ' + JSON.stringify(w)); }
+      return res.json();
+    }
+    let why = '';
+    try { const e = (await res.json()).error || {}; why = ((e.errors && e.errors[0] && e.errors[0].reason) || '') + ' ' + (e.message || ''); } catch (_) {}
+    last = tag + ' ' + res.status + ' ' + why.trim();
+    DBG.log('albumDebug', last);
+    if (res.status !== 400 && res.status !== 403 && res.status !== 404) break;
+  }
+  throw new Error(last || tag);
+}
 
 /* 公開する時刻 OPEN_AT は　ページのいちばん上（<head> の中）にある */
 
@@ -1747,18 +1775,10 @@ const Ranking = (function () {
     const counts = {};
     let pageToken = null, pages = 0;
     do {
-      const params = new URLSearchParams({
-        q: ALL_FOLDERS_Q + " and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
-        pageSize: '1000',
-        fields: 'nextPageToken,files(name,owners(displayName))',
-        supportsAllDrives: 'true',
-        includeItemsFromAllDrives: 'true',
-        key: DRIVE_API_KEY,
-      });
-      if (pageToken) params.set('pageToken', pageToken);
-      const res = await fetch('https://www.googleapis.com/drive/v3/files?' + params, { credentials: 'omit' });
-      if (!res.ok) throw new Error('ranking ' + res.status);
-      const data = await res.json();
+      const extra = { pageSize: '1000' };
+      if (pageToken) extra.pageToken = pageToken;
+      const data = await driveFiles('ranking', " and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
+        'nextPageToken,files(name,owners(displayName))', extra);
       (data.files || []).forEach(f => {
         const m = String(f.name || '').match(/^\d{8}-\d{6}_(.+?)_/);
         const who = m ? m[1] : (f.owners && f.owners[0] && f.owners[0].displayName) || '';
@@ -1830,19 +1850,10 @@ const Album = (function () {
   const DIRECT_LIST = !!(DRIVE_API_KEY && FOLDER_ID);
   const guestFromName = name => { const m = String(name || '').match(/^\d{8}-\d{6}_(.+?)_/); return m ? m[1] : ''; };
   async function listDirect(pageToken) {
-    const params = new URLSearchParams({
-      q: ALL_FOLDERS_Q + " and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
-      orderBy: 'createdTime desc',
-      pageSize: '60',
-      fields: 'nextPageToken,files(id,name,mimeType,size,thumbnailLink,owners(displayName))',
-      supportsAllDrives: 'true',
-      includeItemsFromAllDrives: 'true',
-      key: DRIVE_API_KEY,
-    });
-    if (pageToken) params.set('pageToken', pageToken);
-    const res = await fetch('https://www.googleapis.com/drive/v3/files?' + params, { credentials: 'omit' });
-    if (!res.ok) throw new Error('list ' + res.status);
-    const data = await res.json();
+    const extra = { orderBy: 'createdTime desc', pageSize: '60' };
+    if (pageToken) extra.pageToken = pageToken;
+    const data = await driveFiles('list', " and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
+      'nextPageToken,files(id,name,mimeType,size,thumbnailLink,owners(displayName))', extra);
     return {
       items: (data.files || []).map(f => ({
         id: f.id,
