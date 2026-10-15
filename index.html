@@ -668,6 +668,31 @@ const FOLDER_ID = '1ep4soi5PT5DipmC1MCXOKjwzoGmvNBxn';
 const VIDEO_FOLDER_ID = '1CpMshp2SWaQrdyGDCf2Y_7GH3F9HUVXA';
 // 一覧やランキングで読むフォルダ
 const foldersQ = both => '(' + [FOLDER_ID, both ? VIDEO_FOLDER_ID : ''].filter(Boolean).map(id => "'" + id + "' in parents").join(' or ') + ')';
+/* ?debug のときだけ　フォルダごとに Drive が答えてくれるかを調べて記録に出す */
+async function driveDiag() {
+  const base = 'https://www.googleapis.com/drive/v3/files';
+  const tryOne = async (label, url) => {
+    try {
+      const res = await fetch(url + (url.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(DRIVE_API_KEY), { credentials: 'omit' });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok) {
+        DBG.log('albumDebug', '診断 ' + label + '  OK  ' + (j.files ? j.files.length + '件 ' + j.files.map(f => f.name).slice(0, 2).join(' / ') : (j.name || '')));
+      } else {
+        const e = j.error || {};
+        DBG.log('albumDebug', '診断 ' + label + '  ' + res.status + ' ' + ((e.errors && e.errors[0] && e.errors[0].reason) || '') + ' ' + (e.message || ''));
+      }
+    } catch (e) { DBG.log('albumDebug', '診断 ' + label + '  通信失敗 ' + errText(e)); }
+  };
+  const list = id => base + '?' + new URLSearchParams({ q: "'" + id + "' in parents and trashed = false", pageSize: '3', fields: 'files(id,name)' });
+  await tryOne('元フォルダ情報', base + '/' + FOLDER_ID + '?fields=id,name');
+  await tryOne('元フォルダ中身', list(FOLDER_ID));
+  if (VIDEO_FOLDER_ID) {
+    await tryOne('動画フォルダ情報', base + '/' + VIDEO_FOLDER_ID + '?fields=id,name');
+    await tryOne('動画フォルダ中身', list(VIDEO_FOLDER_ID));
+  }
+}
+if (/[?&]debug\b/.test(location.search)) setTimeout(() => { if (DRIVE_API_KEY) driveDiag(); }, 1500);
+
 /* Drive に直接一覧を聞く
    動画フォルダの共有設定がまだ・持ち主の名前が読めない　などで断られたら　聞き方を控えめにしてやり直す */
 const LIST_WAYS = [{ both: true, owners: true }, { both: true, owners: false }, { both: false, owners: false }];
