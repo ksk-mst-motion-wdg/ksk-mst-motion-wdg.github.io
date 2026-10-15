@@ -230,6 +230,10 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
   .error:empty { display: none; }
   #send { margin-top: 24px; }
   .vnote { text-align: center; margin: 18px 0 0; font-size: 12.5px; line-height: 1.9; color: var(--ink-soft); }
+  .driveway { margin: 20px auto 0; padding: 16px 14px; max-width: 340px; text-align: center; border: 1px solid rgba(255, 255, 255, .14); border-radius: 12px; font-size: 13px; line-height: 1.9; }
+  .driveway p { margin: 0; }
+  .driveway .btn.small { display: inline-block; width: auto; margin: 12px 0; padding: 10px 22px; font-size: 14px; }
+  .driveway .soft { color: var(--ink-soft); font-size: 12px; }
   .vnote.safari { margin-top: 10px; color: var(--gold); opacity: .85; }
   .vnote .vh { display: block; color: var(--gold); font-size: 15px; letter-spacing: .08em; }
   .note { text-align: center; font-size: 12.5px; color: var(--ink-soft); margin: 14px 0 0; opacity: .85; }
@@ -514,6 +518,11 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
 
           <p class="vnote"><span class="vh">動画は少しお時間がかかります</span>ご自宅などでゆっくり<br>シェアしていただくのもおすすめです</p>
           <p class="vnote safari" id="safariHint" hidden>Safariで開くと<br>動画をえらぶのが早くなります</p>
+          <div class="driveway" id="driveWay" hidden>
+            <p>動画がたくさんある方は<br>Googleドライブのアプリからもシェアできます</p>
+            <a class="btn line small" id="driveLink" href="#" target="_blank" rel="noopener">ドライブのアプリで開く</a>
+            <p class="soft">開いたら　右下の「＋」→「アップロード」から<br>動画をえらんでください<br>Googleアカウントでのログインが必要です</p>
+          </div>
 
           <ul class="picks" id="picks"></ul>
           <p class="pickinfo" id="pickInfo"></p>
@@ -655,6 +664,10 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbwsD2MxTfQZiNVEcKbQnfTt
    FOLDER_ID     : 写真フォルダの ID（Code.gs と同じもの） */
 const DRIVE_API_KEY = 'AIzaSyD5YXxhJXaGNG8tYsAhvBf_8NBTDCYkg4c';
 const FOLDER_ID = '1ep4soi5PT5DipmC1MCXOKjwzoGmvNBxn';
+// Google ドライブのアプリから動画を直接入れてもらうフォルダ（保存先フォルダの中に作る　空なら案内を出さない）
+const VIDEO_FOLDER_ID = '';
+// 一覧やランキングで読むフォルダ
+const ALL_FOLDERS_Q = '(' + [FOLDER_ID, VIDEO_FOLDER_ID].filter(Boolean).map(id => "'" + id + "' in parents").join(' or ') + ')';
 
 /* 公開する時刻 OPEN_AT は　ページのいちばん上（<head> の中）にある */
 
@@ -1609,6 +1622,10 @@ const Upload = (function () {
   }
 
   /* ---- 初期化 ---- */
+  if (VIDEO_FOLDER_ID) {
+    $('driveLink').href = 'https://drive.google.com/drive/folders/' + VIDEO_FOLDER_ID;
+    $('driveWay').hidden = false;
+  }
   // iPhone の Safari 以外（Chrome や LINE などのアプリ内ブラウザ）は　動画をえらぶときに変換が入って遅いので案内する
   (function () {
     const ua = navigator.userAgent;
@@ -1731,9 +1748,9 @@ const Ranking = (function () {
     let pageToken = null, pages = 0;
     do {
       const params = new URLSearchParams({
-        q: "'" + FOLDER_ID + "' in parents and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
+        q: ALL_FOLDERS_Q + " and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
         pageSize: '1000',
-        fields: 'nextPageToken,files(name)',
+        fields: 'nextPageToken,files(name,owners(displayName))',
         supportsAllDrives: 'true',
         includeItemsFromAllDrives: 'true',
         key: DRIVE_API_KEY,
@@ -1744,7 +1761,8 @@ const Ranking = (function () {
       const data = await res.json();
       (data.files || []).forEach(f => {
         const m = String(f.name || '').match(/^\d{8}-\d{6}_(.+?)_/);
-        if (m) counts[m[1]] = (counts[m[1]] || 0) + 1;
+        const who = m ? m[1] : (f.owners && f.owners[0] && f.owners[0].displayName) || '';
+        if (who) counts[who] = (counts[who] || 0) + 1;
       });
       pageToken = data.nextPageToken || null;
     } while (pageToken && ++pages < 20);
@@ -1813,10 +1831,10 @@ const Album = (function () {
   const guestFromName = name => { const m = String(name || '').match(/^\d{8}-\d{6}_(.+?)_/); return m ? m[1] : ''; };
   async function listDirect(pageToken) {
     const params = new URLSearchParams({
-      q: "'" + FOLDER_ID + "' in parents and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
+      q: ALL_FOLDERS_Q + " and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
       orderBy: 'createdTime desc',
       pageSize: '60',
-      fields: 'nextPageToken,files(id,name,mimeType,size,thumbnailLink)',
+      fields: 'nextPageToken,files(id,name,mimeType,size,thumbnailLink,owners(displayName))',
       supportsAllDrives: 'true',
       includeItemsFromAllDrives: 'true',
       key: DRIVE_API_KEY,
@@ -1829,7 +1847,8 @@ const Album = (function () {
       items: (data.files || []).map(f => ({
         id: f.id,
         type: String(f.mimeType).indexOf('video/') === 0 ? 'video' : 'image',
-        guest: guestFromName(f.name),
+        // ドライブのアプリから入れた動画はファイル名にニックネームが無いので　持ち主の名前を使う
+        guest: guestFromName(f.name) || ((f.owners && f.owners[0] && f.owners[0].displayName) || ''),
         name: String(f.name || '').replace(/^\d{8}-\d{6}_/, ''),
         mime: f.mimeType,
         thumbLink: f.thumbnailLink || '',
