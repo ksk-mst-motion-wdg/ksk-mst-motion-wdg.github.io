@@ -230,6 +230,7 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
   .error:empty { display: none; }
   #send { margin-top: 24px; }
   .vnote { text-align: center; margin: 18px 0 0; font-size: 12.5px; line-height: 1.9; color: var(--ink-soft); }
+  .vnote.safari { margin-top: 10px; color: var(--gold); opacity: .85; }
   .vnote .vh { display: block; color: var(--gold); font-size: 15px; letter-spacing: .08em; }
   .note { text-align: center; font-size: 12.5px; color: var(--ink-soft); margin: 14px 0 0; opacity: .85; }
 
@@ -512,6 +513,7 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
           </label>
 
           <p class="vnote"><span class="vh">動画は少しお時間がかかります</span>ご自宅などでゆっくり<br>シェアしていただくのもおすすめです</p>
+          <p class="vnote safari" id="safariHint" hidden>Safariで開くと<br>動画をえらぶのが早くなります</p>
 
           <ul class="picks" id="picks"></ul>
           <p class="pickinfo" id="pickInfo"></p>
@@ -1607,6 +1609,13 @@ const Upload = (function () {
   }
 
   /* ---- 初期化 ---- */
+  // iPhone の Safari 以外（Chrome や LINE などのアプリ内ブラウザ）は　動画をえらぶときに変換が入って遅いので案内する
+  (function () {
+    const ua = navigator.userAgent;
+    const ios = /iP(hone|ad|od)/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const notSafari = /CriOS|FxiOS|EdgiOS|GSA\/|Line\/|Instagram|FBAN|FBAV|YJApp|OPiOS|DuckDuckGo/i.test(ua);
+    if (ios && notSafari) $('safariHint').hidden = false;
+  })();
   // 写真えらびの速さを比べる用　?acc=none / all / basic で受け付ける種類の書き方を変えられる
   (function () {
     const m = location.search.match(/[?&]acc=(\w+)/);
@@ -1618,6 +1627,7 @@ const Upload = (function () {
     else if (m[1] === 'mov') el.setAttribute('accept', 'image/*,video/quicktime,video/mp4');
     dlog('accept = ' + (el.getAttribute('accept') || '（なし）'));
   })();
+  dlog('版 1015b　' + (navigator.userAgent.match(/OS [\d_]+/) || [''])[0]);
   $('fileInput').addEventListener('click', () => { pickerOpen = true; dlog('えらぶ画面を開きました'); pickT0 = performance.now(); });
   $('fileInput').addEventListener('change', e => {
     pickerOpen = false;
