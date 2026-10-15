@@ -667,7 +667,7 @@ const FOLDER_ID = '1ep4soi5PT5DipmC1MCXOKjwzoGmvNBxn';
 // Google ドライブのアプリから動画を直接入れてもらうフォルダ（保存先フォルダの中に作る　空なら案内を出さない）
 const VIDEO_FOLDER_ID = '1CpMshp2SWaQrdyGDCf2Y_7GH3F9HUVXA';
 // 一覧やランキングで読むフォルダ
-const foldersQ = both => '(' + [FOLDER_ID, both ? VIDEO_FOLDER_ID : ''].filter(Boolean).map(id => "'" + id + "' in parents").join(' or ') + ')';
+const MEDIA_FOLDERS = [FOLDER_ID, VIDEO_FOLDER_ID].filter(Boolean);
 /* ?debug のときだけ　フォルダごとに Drive が答えてくれるかを調べて記録に出す */
 async function driveDiag() {
   const base = 'https://www.googleapis.com/drive/v3/files';
@@ -693,33 +693,29 @@ async function driveDiag() {
 }
 if (/[?&]debug\b/.test(location.search)) setTimeout(() => { if (DRIVE_API_KEY) driveDiag(); }, 1500);
 
-/* Drive に直接一覧を聞く
-   動画フォルダの共有設定がまだ・持ち主の名前が読めない　などで断られたら　聞き方を控えめにしてやり直す */
-const LIST_WAYS = [{ both: true, owners: true }, { both: true, owners: false }, { both: false, owners: false }];
-let listWay = 0;
-async function driveFiles(tag, q, fields, extra) {
-  let last = '';
-  for (let i = listWay; i < LIST_WAYS.length; i++) {
-    const w = LIST_WAYS[i];
+/* Drive に直接 1つのフォルダの中身を聞く
+   （複数のフォルダを or でまとめて聞くと API キーでは断られるので　フォルダごとに聞く）
+   持ち主の名前を読めないと断られたら　名前なしで聞き直す */
+let ownersOk = true;
+async function driveFiles(tag, folderId, q, fields, extra) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     const params = new URLSearchParams(Object.assign({
-      q: foldersQ(w.both) + q,
-      fields: w.owners ? fields : fields.replace(',owners(displayName)', ''),
+      q: "'" + folderId + "' in parents" + q,
+      fields: ownersOk ? fields : fields.replace(',owners(displayName)', ''),
       supportsAllDrives: 'true',
       includeItemsFromAllDrives: 'true',
       key: DRIVE_API_KEY,
     }, extra || {}));
     const res = await fetch('https://www.googleapis.com/drive/v3/files?' + params, { credentials: 'omit' });
-    if (res.ok) {
-      if (i !== listWay) { listWay = i; DBG.log('albumDebug', '一覧の聞き方を変更 ' + JSON.stringify(w)); }
-      return res.json();
-    }
+    if (res.ok) return res.json();
     let why = '';
     try { const e = (await res.json()).error || {}; why = ((e.errors && e.errors[0] && e.errors[0].reason) || '') + ' ' + (e.message || ''); } catch (_) {}
-    last = tag + ' ' + res.status + ' ' + why.trim();
-    DBG.log('albumDebug', last);
-    if (res.status !== 400 && res.status !== 403 && res.status !== 404) break;
+    const msg = tag + ' ' + res.status + ' ' + why.trim();
+    DBG.log('albumDebug', msg);
+    if (res.status === 403 && ownersOk && fields.includes('owners')) { ownersOk = false; continue; }
+    throw new Error(msg);
   }
-  throw new Error(last || tag);
+  throw new Error(tag);
 }
 
 /* 公開する時刻 OPEN_AT は　ページのいちばん上（<head> の中）にある */
@@ -1798,19 +1794,21 @@ const Ranking = (function () {
 
   async function countAll() {
     const counts = {};
-    let pageToken = null, pages = 0;
-    do {
-      const extra = { pageSize: '1000' };
-      if (pageToken) extra.pageToken = pageToken;
-      const data = await driveFiles('ranking', " and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
-        'nextPageToken,files(name,owners(displayName))', extra);
-      (data.files || []).forEach(f => {
-        const m = String(f.name || '').match(/^\d{8}-\d{6}_(.+?)_/);
-        const who = m ? m[1] : (f.owners && f.owners[0] && f.owners[0].displayName) || '';
-        if (who) counts[who] = (counts[who] || 0) + 1;
-      });
-      pageToken = data.nextPageToken || null;
-    } while (pageToken && ++pages < 20);
+    await Promise.all(MEDIA_FOLDERS.map(async folderId => {
+      let pageToken = null, pages = 0;
+      do {
+        const extra = { pageSize: '1000' };
+        if (pageToken) extra.pageToken = pageToken;
+        const data = await driveFiles('ranking', folderId, " and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
+          'nextPageToken,files(name,owners(displayName))', extra);
+        (data.files || []).forEach(f => {
+          const m = String(f.name || '').match(/^\d{8}-\d{6}_(.+?)_/);
+          const who = m ? m[1] : (f.owners && f.owners[0] && f.owners[0].displayName) || '';
+          if (who) counts[who] = (counts[who] || 0) + 1;
+        });
+        pageToken = data.nextPageToken || null;
+      } while (pageToken && ++pages < 20);
+    }));
     return counts;
   }
 
@@ -1875,10 +1873,19 @@ const Album = (function () {
   const DIRECT_LIST = !!(DRIVE_API_KEY && FOLDER_ID);
   const guestFromName = name => { const m = String(name || '').match(/^\d{8}-\d{6}_(.+?)_/); return m ? m[1] : ''; };
   async function listDirect(pageToken) {
-    const extra = { orderBy: 'createdTime desc', pageSize: '60' };
-    if (pageToken) extra.pageToken = pageToken;
-    const data = await driveFiles('list', " and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
-      'nextPageToken,files(id,name,mimeType,size,thumbnailLink,owners(displayName))', extra);
+    // フォルダごとに聞いて　新しい順に混ぜる　続きの目印はフォルダごとに持つ
+    const state = pageToken ? JSON.parse(pageToken) : null;
+    const pages = await Promise.all(MEDIA_FOLDERS.map((folderId, i) => {
+      if (state && !state[i]) return { files: [] };   // このフォルダはもう読み終わった
+      const extra = { orderBy: 'createdTime desc', pageSize: '60' };
+      if (state) extra.pageToken = state[i];
+      return driveFiles('list', folderId, " and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
+        'nextPageToken,files(id,name,mimeType,size,createdTime,thumbnailLink,owners(displayName))', extra);
+    }));
+    const next = pages.map(d => d.nextPageToken || null);
+    const files = [].concat(...pages.map(d => d.files || []))
+      .sort((x, y) => String(y.createdTime || '').localeCompare(String(x.createdTime || '')));
+    const data = { files: files, nextPageToken: next.some(Boolean) ? JSON.stringify(next) : null };
     return {
       items: (data.files || []).map(f => ({
         id: f.id,
