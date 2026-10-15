@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#060A22">
 <title>Keisuke &amp; Misato</title>
+<!-- LINE などのリンクプレビューに出す文　本文の中身が先に見えないように指定しておく -->
+<meta name="description" content="10月17日　受付開始 15:00">
+<meta property="og:title" content="Keisuke &amp; Misato">
+<meta property="og:description" content="10月17日　受付開始 15:00">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://ksk-mst-motion-wdg.github.io/">
+<meta name="twitter:card" content="summary">
 <script>
 /* 公開する時刻（日本時間）　これより前に開くと「お待ちください」のページになり　時刻になると自動で切り替わる
    ふたりが事前に確認したいときは　URL の後ろに ?preview を付けて開く
@@ -924,6 +931,10 @@ const DBG = (function () {
    ========================================================= */
 const VIEWS = ['guide', 'upload', 'photos'];
 let current = null;
+// ?novt を付けると動画のサムネ作りを止める（写真えらびが遅いときの切り分け用）
+const NO_VTHUMB = /[?&]novt\b/.test(location.search);
+// 写真をえらぶ画面を開いているあいだは　裏の重い処理を控える
+let pickerOpen = false;
 
 function go(name) {
   if (VIEWS.indexOf(name) < 0) name = 'guide';
@@ -1050,6 +1061,7 @@ const Upload = (function () {
 
   const isVideo = f => f.type.indexOf('video/') === 0 || /\.(mov|mp4|m4v)$/i.test(f.name);
   let videoRunning = 0;
+  let pickT0 = 0;
   let videoHoldUntil = 0;   // 写真をえらんだ直後は　動画のサムネ作りを少し待つ
   let videoTimer = 0;
 
@@ -1096,7 +1108,10 @@ const Upload = (function () {
   function makeThumb(item) {
     const f = item.file;
     const frag = document.createDocumentFragment();
-    if (isVideo(f)) {
+    if (isVideo(f) && NO_VTHUMB) {
+      frag.appendChild(span('', 'ph play'));
+      frag.appendChild(span('動画', 'vbadge'));
+    } else if (isVideo(f)) {
       const ph = span('動画', 'ph loading');
       ph._load = () => requestThumb(item, () => {
         ph.classList.remove('loading');
@@ -1592,7 +1607,14 @@ const Upload = (function () {
   }
 
   /* ---- 初期化 ---- */
-  $('fileInput').addEventListener('change', e => { addFiles(e.target.files); e.target.value = ''; });
+  $('fileInput').addEventListener('click', () => { pickerOpen = true; dlog('えらぶ画面を開きました'); pickT0 = performance.now(); });
+  $('fileInput').addEventListener('change', e => {
+    pickerOpen = false;
+    if (pickT0) dlog('えらぶ画面から戻りました ' + sec(performance.now() - pickT0) + '（えらんでいた時間も含む）' + e.target.files.length + '件');
+    addFiles(e.target.files); e.target.value = '';
+  });
+  // えらばずに閉じたとき
+  window.addEventListener('focus', () => setTimeout(() => { pickerOpen = false; }, 1500));
   $('guest').addEventListener('input', () => { refresh(); schedulePrepare(900); });
   $('pass').addEventListener('input', () => { refresh(); schedulePrepare(900); });
   $('send').addEventListener('click', openConfirm);
@@ -2012,7 +2034,7 @@ const Album = (function () {
   const backfillTried = new Set();
   let backfillRunning = false;
   function backfill(p) {
-    if (!DRIVE_API_KEY || backfillTried.has(p.id) || (p.size && p.size > BACKFILL_MAX)) return;
+    if (NO_VTHUMB || !DRIVE_API_KEY || backfillTried.has(p.id) || (p.size && p.size > BACKFILL_MAX)) return;
     backfillTried.add(p.id);
     backfillQueue.push(p);
     runBackfill();
@@ -2021,6 +2043,8 @@ const Album = (function () {
     if (backfillRunning) return;
     backfillRunning = true;
     while (backfillQueue.length) {
+      // 「みんなの写真」を見ているときだけ　えらぶ画面やシェア中は待つ
+      while (current !== 'photos' || pickerOpen || Upload.isBusy()) await sleep(1000);
       const p = backfillQueue.shift();
       if (Thumbs.get(p.id)) continue;
       try {
