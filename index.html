@@ -1607,6 +1607,17 @@ const Upload = (function () {
   }
 
   /* ---- 初期化 ---- */
+  // 写真えらびの速さを比べる用　?acc=none / all / basic で受け付ける種類の書き方を変えられる
+  (function () {
+    const m = location.search.match(/[?&]acc=(\w+)/);
+    if (!m) return;
+    const el = $('fileInput');
+    if (m[1] === 'none') el.removeAttribute('accept');
+    else if (m[1] === 'all') el.setAttribute('accept', '*/*');
+    else if (m[1] === 'basic') el.setAttribute('accept', 'image/*,video/*');
+    else if (m[1] === 'mov') el.setAttribute('accept', 'image/*,video/quicktime,video/mp4');
+    dlog('accept = ' + (el.getAttribute('accept') || '（なし）'));
+  })();
   $('fileInput').addEventListener('click', () => { pickerOpen = true; dlog('えらぶ画面を開きました'); pickT0 = performance.now(); });
   $('fileInput').addEventListener('change', e => {
     pickerOpen = false;
