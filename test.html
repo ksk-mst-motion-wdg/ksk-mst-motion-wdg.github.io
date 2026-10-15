@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>えらぶ画面のテスト</title>
+<style>
+  body { margin: 0; padding: 24px 16px; font: 16px/1.7 -apple-system, sans-serif; background: #fff; color: #111; }
+  label { display: block; padding: 16px; border: 1px solid #999; border-radius: 10px; text-align: center; }
+  input { display: none; }
+  #log { margin-top: 20px; font: 13px/1.6 ui-monospace, monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<p>何も入っていないページです<br>アプリと同じように動画をえらんで　かかった時間を比べます</p>
+<label>写真や動画をえらぶ<input id="f" type="file" multiple></label>
+<div id="log"></div>
+<script>
+  const f = document.getElementById('f'), log = document.getElementById('log');
+  const m = location.search.match(/[?&]acc=(\w+)/);
+  const acc = { basic: 'image/*,video/*', app: 'image/*,image/heic,image/heif,video/*,video/quicktime,video/mp4', all: '*/*' }[m && m[1]];
+  if (acc) f.setAttribute('accept', acc);
+  const add = s => { log.textContent = s + '\n' + log.textContent; };
+  add('accept = ' + (f.getAttribute('accept') || '（なし）'));
+  let t0 = 0;
+  f.addEventListener('click', () => { t0 = performance.now(); });
+  f.addEventListener('change', () => {
+    const files = Array.from(f.files);
+    add('戻るまで ' + ((performance.now() - t0) / 1000).toFixed(1) + 's（えらんでいた時間を含む）　' + files.length + '件\n' +
+      files.map(x => '  ' + x.name + '  ' + (x.size / 1024 / 1024).toFixed(1) + 'MB  ' + (x.type || '?')).join('\n'));
+    f.value = '';
+  });
+</script>
+</body>
+</html>
