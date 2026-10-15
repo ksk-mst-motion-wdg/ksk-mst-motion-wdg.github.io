@@ -230,10 +230,11 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
   .error:empty { display: none; }
   #send { margin-top: 24px; }
   .vnote { text-align: center; margin: 18px 0 0; font-size: 12.5px; line-height: 1.9; color: var(--ink-soft); }
-  .driveway { margin: 20px auto 0; padding: 16px 14px; max-width: 340px; text-align: center; border: 1px solid rgba(255, 255, 255, .14); border-radius: 12px; font-size: 13px; line-height: 1.9; }
+  .driveway { margin: 36px 0 0; padding-top: 28px; text-align: center; font-size: 13px; line-height: 1.9; color: var(--ink-soft); position: relative; }
+  .driveway::before { content: ''; position: absolute; top: 0; left: 50%; width: 48px; height: 1px; margin-left: -24px; background: rgba(255, 255, 255, .25); }
   .driveway p { margin: 0; }
-  .driveway .btn.small { display: inline-block; width: auto; margin: 12px 0; padding: 10px 22px; font-size: 14px; }
-  .driveway .soft { color: var(--ink-soft); font-size: 12px; }
+  .driveway .drivebtn { display: inline-block; width: auto; margin: 14px 0 10px; padding: 10px 22px; font-size: 14px; letter-spacing: .06em; text-decoration: none; }
+  .driveway .small { font-size: 11.5px; opacity: .85; }
   .vnote.safari { margin-top: 10px; color: var(--gold); opacity: .85; }
   .vnote .vh { display: block; color: var(--gold); font-size: 15px; letter-spacing: .08em; }
   .note { text-align: center; font-size: 12.5px; color: var(--ink-soft); margin: 14px 0 0; opacity: .85; }
@@ -516,13 +517,11 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
             <input id="fileInput" type="file" accept="image/*,image/heic,image/heif,video/*,video/quicktime,video/mp4" multiple>
           </label>
 
-          <p class="vnote"><span class="vh">動画は少しお時間がかかります</span>ご自宅などでゆっくり<br>シェアしていただくのもおすすめです</p>
-          <p class="vnote safari" id="safariHint" hidden>Safariで開くと<br>動画をえらぶのが早くなります</p>
-          <div class="driveway" id="driveWay" hidden>
-            <p>動画がたくさんある方は<br>Googleドライブのアプリからもシェアできます</p>
-            <a class="btn line small" id="driveLink" href="#" target="_blank" rel="noopener">ドライブのアプリで開く</a>
-            <p class="soft">開いたら　右下の「＋」→「アップロード」から<br>動画をえらんでください<br>Googleアカウントでのログインが必要です</p>
+          <div class="vnote">
+            <span class="vh">動画は少しお時間がかかります</span>
+            ご自宅などでゆっくりシェアしていただけます
           </div>
+          <p class="vnote safari" id="safariHint" hidden>Safariで開くと<br>動画をえらぶのが早くなります</p>
 
           <ul class="picks" id="picks"></ul>
           <p class="pickinfo" id="pickInfo"></p>
@@ -530,6 +529,12 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
           <button class="btn" id="send" type="button" disabled>シェアする</button>
           <p class="error" id="upError"></p>
           <p class="note">シェアが完了するまで<br>この画面を開いたままにしてください</p>
+
+          <div class="driveway" id="driveWay" hidden>
+            <p>動画などをたくさんシェアしたい方は<br>こちらからどうぞ</p>
+            <a class="btn line drivebtn" id="driveLink" href="#" target="_blank" rel="noopener">Googleドライブのアプリでシェアする</a>
+            <p class="small">開いたら「＋」→「アップロード」から選んでください<br>Googleアカウントでのログインが必要です<br>ご自身のGoogleドライブの容量を使います</p>
+          </div>
         </div>
 
         <div id="upDone" class="msg" hidden>
