@@ -311,7 +311,7 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
   /* ---------- 下のタブ ---------- */
   .tabbar {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
-    display: grid; grid-template-columns: repeat(3, 1fr);
+    display: grid; grid-template-columns: repeat(4, 1fr);
     background: var(--bar);
     border-top: 1px solid rgba(244, 207, 138, .2);
     padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -553,8 +553,8 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
     <!-- ===== みんなの写真 ===== -->
     <main id="view-photos" hidden>
       <section class="section">
-        <h2 class="title">みんなの写真</h2>
-        <p class="lead"><span class="l">皆さまがシェアしてくださった写真です</span></p>
+        <h2 class="title" id="albumTitle">みんなの写真</h2>
+        <p class="lead"><span class="l" id="albumLead">皆さまがシェアしてくださった写真です</span></p>
 
         <section class="ranking" id="ranking" aria-labelledby="rankTitle" hidden>
           <h3 id="rankTitle">シェア数ランキング</h3>
@@ -578,8 +578,9 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
 
         <div id="albumEmpty" class="msg" hidden>
           <h3>まだ写真はありません</h3>
-          <p><span class="l">最初の1枚を</span><span class="l">シェアしてみませんか</span></p>
-          <a class="btn line" href="#upload">写真を送る</a>
+          <p id="emptyGuests"><span class="l">最初の1枚を</span><span class="l">シェアしてみませんか</span></p>
+          <a class="btn line" href="#upload" id="emptyGuestsBtn">写真を送る</a>
+          <p id="emptyPro" hidden><span class="l">カメラマンの写真が届きましたら</span><span class="l">こちらに並びます</span></p>
         </div>
       </section>
     </main>
@@ -594,6 +595,7 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
   <a href="#guide" id="tab-guide">ご案内</a>
   <a href="#upload" id="tab-upload">写真を送る</a>
   <a href="#photos" id="tab-photos">みんなの写真</a>
+  <a href="#pro" id="tab-pro">カメラマン</a>
 </nav>
 
 <!-- 送る前の確認 -->
@@ -676,6 +678,8 @@ const FOLDER_ID = '1ep4soi5PT5DipmC1MCXOKjwzoGmvNBxn';
 const VIDEO_FOLDER_ID = '1CpMshp2SWaQrdyGDCf2Y_7GH3F9HUVXA';
 // 一覧やランキングで読むフォルダ
 const MEDIA_FOLDERS = [FOLDER_ID, VIDEO_FOLDER_ID].filter(Boolean);
+// カメラマンの写真のフォルダ（中にフォルダが分かれていても1階層までは読む）
+const PRO_FOLDER_ID = '1UkQ6ubzGicOFseyAfb3cDjIGVDtcWzyb';
 /* ?debug のときだけ　フォルダごとに Drive が答えてくれるかを調べて記録に出す */
 async function driveDiag() {
   const base = 'https://www.googleapis.com/drive/v3/files';
@@ -1001,7 +1005,10 @@ const DBG = (function () {
 /* =========================================================
    画面の切り替え
    ========================================================= */
-const VIEWS = ['guide', 'upload', 'photos'];
+const VIEWS = ['guide', 'upload', 'photos', 'pro'];
+// みんなの写真とカメラマンの写真は同じ画面を使う
+const viewEl = v => $('view-' + (v === 'pro' ? 'photos' : v));
+const isAlbumView = () => current === 'photos' || current === 'pro';
 let current = null;
 // ?novt を付けると動画のサムネ作りを止める（写真えらびが遅いときの切り分け用）
 const NO_VTHUMB = /[?&]novt\b/.test(location.search);
@@ -1014,12 +1021,12 @@ function go(name) {
   current = name;
   document.body.dataset.view = name;
   VIEWS.forEach(v => {
-    $('view-' + v).hidden = v !== name;
+    viewEl(v).hidden = viewEl(v) !== viewEl(name);
     $('tab-' + v).setAttribute('aria-current', v === name ? 'page' : 'false');
   });
   if (changed) window.scrollTo(0, 0);
   if (name === 'upload') Upload.enter();
-  if (name === 'photos') Album.enter(); else Album.leave();
+  if (name === 'photos' || name === 'pro') Album.enter(name === 'pro' ? 'pro' : 'guests'); else Album.leave();
   Sky.refresh(false);
 }
 
@@ -1836,7 +1843,7 @@ const Ranking = (function () {
       li.append(span(rank + '位', 'rk'), span(x.name, 'nm'), span(x.n + '件', 'ct'));
       box.appendChild(li);
     });
-    $('ranking').hidden = false;
+    $('ranking').hidden = current === 'pro';
   }
 
   async function refresh(loaded, complete) {
@@ -1873,7 +1880,9 @@ const Album = (function () {
   let stale = false;        // 写真を送った直後など　GAS のキャッシュを使わず最新を取りたいとき
   let lastFetch = 0;
   let gen = 0;
-  const CACHE_KEY = 'motion.album';
+  let src = 'guests';         // guests：みんなの写真　pro：カメラマンの写真
+  const saved = {};           // もう一方の一覧を切り替えのあいだ預けておく
+  const cacheKey = () => src === 'pro' ? 'motion.album.pro' : 'motion.album';
 
   function setState(text) { $('albumState').textContent = text || ''; }
 
@@ -1910,7 +1919,42 @@ const Album = (function () {
     };
   }
   let directListOk = DIRECT_LIST;
+  /* カメラマンの写真　撮った順（ファイル名順）に並べる
+     フォルダの直下を先に　そのあと中のフォルダを名前順に読む */
+  let proFolders = null;
+  async function listPro(pageToken) {
+    if (!proFolders) {
+      const d = await driveFiles('pro', PRO_FOLDER_ID, " and trashed = false and mimeType = 'application/vnd.google-apps.folder'",
+        'files(id,name)', { pageSize: '100', orderBy: 'name' });
+      proFolders = [PRO_FOLDER_ID].concat((d.files || []).map(f => f.id));
+    }
+    let st = pageToken ? JSON.parse(pageToken) : { i: 0, t: null };
+    const files = [];
+    while (st && files.length < 60) {
+      const extra = { orderBy: 'name', pageSize: '60' };
+      if (st.t) extra.pageToken = st.t;
+      const d = await driveFiles('pro', proFolders[st.i], " and trashed = false and (mimeType contains 'image/' or mimeType contains 'video/')",
+        'nextPageToken,files(id,name,mimeType,size,thumbnailLink)', extra);
+      files.push(...(d.files || []));
+      st = d.nextPageToken ? { i: st.i, t: d.nextPageToken } : (st.i + 1 < proFolders.length ? { i: st.i + 1, t: null } : null);
+    }
+    return {
+      items: files.map(f => ({
+        id: f.id,
+        type: String(f.mimeType).indexOf('video/') === 0 ? 'video' : 'image',
+        guest: '',
+        name: f.name,
+        mime: f.mimeType,
+        thumbLink: f.thumbnailLink || '',
+        size: Number(f.size) || 0,
+      })),
+      next: st ? JSON.stringify(st) : null,
+      via: 'api',
+    };
+  }
+
   async function listPhotos(req) {
+    if (src === 'pro') return listPro(req.pageToken);
     // 動画のサムネ表を先に（少しだけ）待ってから並べると　「準備中」がちらつかない
     if (!req.pageToken) await Promise.race([Thumbs.refresh(), sleep(1200)]);
     if (directListOk) {
@@ -2135,7 +2179,7 @@ const Album = (function () {
     backfillRunning = true;
     while (backfillQueue.length) {
       // 「みんなの写真」を見ているときだけ　えらぶ画面やシェア中は待つ
-      while (current !== 'photos' || pickerOpen || Upload.isBusy()) await sleep(1000);
+      while (!isAlbumView() || pickerOpen || Upload.isBusy()) await sleep(1000);
       const p = backfillQueue.shift();
       if (Thumbs.get(p.id)) continue;
       try {
@@ -2233,13 +2277,13 @@ const Album = (function () {
   }
 
   function saveCache(items) {
-    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), items: items.slice(0, 60) })); } catch (_) { /* 保存できなくても動く */ }
+    try { localStorage.setItem(cacheKey(), JSON.stringify({ at: Date.now(), items: items.slice(0, 60) })); } catch (_) { /* 保存できなくても動く */ }
   }
 
   /* 前回見た一覧があれば　通信を待たずにすぐ出す */
   function restoreCache() {
     try {
-      const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+      const c = JSON.parse(localStorage.getItem(cacheKey()) || 'null');
       if (c && Array.isArray(c.items) && c.items.length) {
         append(c.items);
         next = null;
@@ -2265,13 +2309,18 @@ const Album = (function () {
       if (!loaded || !photos.length) {
         append(r.items);
         next = r.next;
-      } else {
+      } else if (src === 'guests') {
         prepend(r.items);
         if (!next) next = r.next;
+      } else {
+        // カメラマンの写真は撮った順なので　取り直したときは並べ直す
+        $('album').textContent = ''; photos = []; ids = new Set();
+        append(r.items);
+        next = r.next;
       }
       loaded = true;
       saveCache(r.items);
-      Ranking.refresh(photos, !next);
+      if (src === 'guests') Ranking.refresh(photos, !next);
       updateCount();
       setState('');
     } catch (e) {
@@ -2305,16 +2354,47 @@ const Album = (function () {
     photos.slice(0, 12).forEach(p => { const i = new Image(); setThumb(i, p.id, 400, () => {}); });
   }
 
-  function enter() {
+  function setTexts() {
+    const pro = src === 'pro';
+    $('albumTitle').textContent = pro ? 'カメラマンの写真' : 'みんなの写真';
+    $('albumLead').textContent = pro ? '当日カメラマンが撮影した写真です' : '皆さまがシェアしてくださった写真です';
+    $('emptyGuests').hidden = pro; $('emptyGuestsBtn').hidden = pro; $('emptyPro').hidden = !pro;
+    $('ranking').hidden = pro || !$('rankList').children.length;
+  }
+
+  /* みんなの写真 ⇔ カメラマンの写真　一覧を預けて入れ替える */
+  function switchTo(to) {
+    if (to === src) return;
+    if (selecting) setSelecting(false);
+    gen++; loading = false;
+    saved[src] = { photos: photos, next: next, loaded: loaded, lastFetch: lastFetch, stale: stale };
+    src = to;
+    const st = saved[to];
+    $('album').textContent = ''; photos = []; ids = new Set();
+    next = null; loaded = false; lastFetch = 0;
+    if (st) {
+      append(st.photos);
+      next = st.next; loaded = st.loaded; lastFetch = st.lastFetch; stale = to === 'guests' ? st.stale : false;
+    } else {
+      restoreCache();
+    }
+    setState('');
+    if (to === 'guests') Ranking.refresh(photos, !next);
+  }
+
+  function enter(to) {
+    switchTo(to || 'guests');
+    setTexts();
     updateCount();
-    // 直前に取ったばかりなら取り直さない
-    if (!stale && loaded && Date.now() - lastFetch < 15000) return;
+    // 直前に取ったばかりなら取り直さない（カメラマンの写真は5分ごと）
+    const fresh = src === 'pro' ? 300000 : 15000;
+    if (!stale && loaded && Date.now() - lastFetch < fresh) return;
     refreshTop();
   }
 
   /* ページを開いたら裏で一覧を取っておく */
   async function prefetch() {
-    if (lastFetch || loading) return;
+    if (src !== 'guests' || lastFetch || loading) return;
     await refreshTop();
     warmThumbs();
   }
@@ -2324,15 +2404,15 @@ const Album = (function () {
   /* 写真を見ている間は　30秒ごとに新しい写真が届いていないか確認する
      スマホに戻ってきたときや　このタブを開いたときも確認する */
   setInterval(() => {
-    if (current === 'photos' && !document.hidden && !selecting && $('viewer').hidden) refreshTop();
+    if (current === 'photos' && src === 'guests' && !document.hidden && !selecting && $('viewer').hidden) refreshTop();
   }, 30000);
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && current === 'photos' && !selecting) refreshTop();
+    if (!document.hidden && current === 'photos' && src === 'guests' && !selecting) refreshTop();
   });
 
   if (window.IntersectionObserver) {
     new IntersectionObserver(entries => {
-      if (entries.some(e => e.isIntersecting) && loaded && current === 'photos') loadMore();
+      if (entries.some(e => e.isIntersecting) && loaded && isAlbumView()) loadMore();
     }, { rootMargin: '600px 0px' }).observe($('albumEnd'));
   }
 
