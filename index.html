@@ -260,6 +260,13 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
   .tile .ph.prep { letter-spacing: .1em; animation: phpulse 2.4s ease-in-out infinite; }
   .tile .ph { position: absolute; inset: 0; }
   .headbtns { display: flex; gap: 8px; }
+  .filters { display: inline-flex; margin-right: auto; gap: 2px; padding: 3px; border-radius: 999px; background: rgba(255, 255, 255, .07); }
+  .filters button {
+    font: inherit; font-size: 13px; letter-spacing: .06em; line-height: 1;
+    padding: 9px 14px; border: 0; border-radius: 999px; background: transparent; color: var(--ink-soft); cursor: pointer;
+  }
+  .filters button[aria-pressed="true"] { background: var(--gold); color: var(--gold-ink); }
+  .album[data-filter="image"] .tile.video, .album[data-filter="video"] .tile:not(.video) { display: none; }
   #albumHead { justify-content: flex-end; }
 
   /* シェア数ランキング */
@@ -562,7 +569,11 @@ if (!/[?&]preview\b/.test(location.search) && Date.now() < OPEN_MS) document.doc
         </section>
 
         <div class="albumhead" id="albumHead">
-          <span class="count" id="albumCount"></span>
+          <span class="filters" id="albumFilter" role="group" aria-label="表示するもの">
+            <button type="button" data-f="all" aria-pressed="true">すべて</button>
+            <button type="button" data-f="image" aria-pressed="false">写真</button>
+            <button type="button" data-f="video" aria-pressed="false">動画</button>
+          </span>
           <span class="headbtns">
             <button class="btn line small" type="button" id="selectStart">選択</button>
           </span>
@@ -1899,6 +1910,29 @@ const Album = (function () {
   const saved = {};           // もう一方の一覧を切り替えのあいだ預けておく
   const cacheKey = () => src === 'pro' ? 'motion.album.pro' : 'motion.album';
 
+  /* 写真だけ・動画だけの絞り込み */
+  let filter = 'all';
+  const passes = p => !!p && (filter === 'all' || p.type === filter);
+  function updateFilterNote() {
+    if (filter === 'all' || !loaded) return;
+    const any = photos.some(passes);
+    if (!any && !next) setState(filter === 'video' ? '動画はまだありません' : '写真はまだありません');
+    else if ($('albumState').textContent.indexOf('まだありません') >= 0) setState('');
+  }
+  function setFilter(f) {
+    filter = f;
+    $('album').dataset.filter = f;
+    $('albumFilter').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.f === f)));
+    if ($('albumState').textContent.indexOf('まだありません') >= 0) setState('');
+    updateFilterNote();
+    // 絞り込みで並ぶものが少なくなったら　続きを読み込む
+    setTimeout(() => { if (next && $('albumEnd').getBoundingClientRect().top < innerHeight + 600) loadMore(); }, 0);
+  }
+  $('albumFilter').addEventListener('click', e => {
+    const b = e.target.closest('button[data-f]');
+    if (b) setFilter(b.dataset.f);
+  });
+
   function setState(text) { $('albumState').textContent = text || ''; }
 
   /* 一覧の取得　API キーがあれば Drive に直接　なければ GAS */
@@ -2057,6 +2091,7 @@ const Album = (function () {
     for (let i = 0; i < tiles.length; i++) {
       const el = tiles[i];
       const id = el.dataset.id;
+      if (el.offsetParent === null) continue;   // 絞り込みで隠れているもの
       let want = i >= lo && i <= hi ? drag.add : drag.base.has(id);
       if (want && !selected.has(id) && selected.size >= Saver.MAX) { want = false; limited = true; }
       if (want) selected.add(id); else selected.delete(id);
@@ -2148,6 +2183,7 @@ const Album = (function () {
   });
 
   function updateCount() {
+    updateFilterNote();
     $('albumEmpty').hidden = !loaded || photos.length > 0;
   }
 
@@ -2440,6 +2476,9 @@ const Album = (function () {
     prefetch: prefetch,
     markStale: () => { stale = true; },
     get: i => photos[i],
+    passes: i => passes(photos[i]),
+    // 絞り込み中は　絞り込んだ中での番号と件数
+    pos: i => { const list = photos.filter(passes); return [list.indexOf(photos[i]) + 1, list.length]; },
     size: () => photos.length,
     hasMore: () => !!next,
     more: loadMore,
@@ -2828,7 +2867,7 @@ const Viewer = (function () {
     save.href = 'https://drive.google.com/uc?export=download&id=' + encodeURIComponent(p.id);
     save.onclick = p.type === 'video' && !DRIVE_API_KEY ? null : e => { e.preventDefault(); Saver.start([p]); };
     $('viewer').classList.toggle('video', p.type === 'video');
-    $('viewerPos').textContent = (index + 1) + ' / ' + Album.size() + (Album.hasMore() ? '+' : '');
+    $('viewerPos').textContent = Album.pos(index).join(' / ') + (Album.hasMore() ? '+' : '');
     $('viewerPrev').disabled = index <= 0;
     $('viewerNext').disabled = index >= Album.size() - 1 && !Album.hasMore();
     if (index >= Album.size() - 3 && Album.hasMore()) Album.more();
@@ -2846,7 +2885,8 @@ const Viewer = (function () {
     document.body.classList.remove('locked');
   }
   function step(d) {
-    const n = index + d;
+    let n = index + d;
+    while (n >= 0 && n < Album.size() && !Album.passes(n)) n += d;   // 絞り込みで隠れているものは飛ばす
     if (n < 0 || n >= Album.size()) return;
     index = n;
     render();
