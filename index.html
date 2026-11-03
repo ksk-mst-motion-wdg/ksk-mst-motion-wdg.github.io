@@ -678,6 +678,20 @@ const FOLDER_ID = '1ep4soi5PT5DipmC1MCXOKjwzoGmvNBxn';
 const VIDEO_FOLDER_ID = '1CpMshp2SWaQrdyGDCf2Y_7GH3F9HUVXA';
 // 一覧やランキングで読むフォルダ
 const MEDIA_FOLDERS = [FOLDER_ID, VIDEO_FOLDER_ID].filter(Boolean);
+// みんなの写真に並べるほかのフォルダ（このフォルダの中身と　中にある「direct」という名前のフォルダの中身）
+const EXTRA_FOLDERS = ['1QS7pwA9bUgkluZLtxA14SdyL1sVrNTKE'];
+const DIRECT_PARENTS = EXTRA_FOLDERS;
+let mediaFoldersP = null;
+function mediaFolders() {
+  if (!mediaFoldersP) {
+    mediaFoldersP = Promise.all(DIRECT_PARENTS.map(pid =>
+      driveFiles('direct', pid, " and trashed = false and mimeType = 'application/vnd.google-apps.folder' and name = 'direct'", 'files(id)', { pageSize: '10' })
+        .then(d => (d.files || []).map(f => f.id))
+        .catch(e => { DBG.log('albumDebug', 'direct フォルダを見つけられません ' + errText(e)); return []; })
+    )).then(found => Array.from(new Set(MEDIA_FOLDERS.concat(EXTRA_FOLDERS, ...found))));
+  }
+  return mediaFoldersP;
+}
 // カメラマンの写真のフォルダ（中にフォルダが分かれていても1階層までは読む）
 const PRO_FOLDER_ID = '1UkQ6ubzGicOFseyAfb3cDjIGVDtcWzyb';
 /* ?debug のときだけ　フォルダごとに Drive が答えてくれるかを調べて記録に出す */
@@ -1809,7 +1823,8 @@ const Ranking = (function () {
 
   async function countAll() {
     const counts = {};
-    await Promise.all(MEDIA_FOLDERS.map(async folderId => {
+    const folders = await mediaFolders();
+    await Promise.all(folders.map(async folderId => {
       let pageToken = null, pages = 0;
       do {
         const extra = { pageSize: '1000' };
@@ -1892,7 +1907,8 @@ const Album = (function () {
   async function listDirect(pageToken) {
     // フォルダごとに聞いて　新しい順に混ぜる　続きの目印はフォルダごとに持つ
     const state = pageToken ? JSON.parse(pageToken) : null;
-    const pages = await Promise.all(MEDIA_FOLDERS.map((folderId, i) => {
+    const folders = await mediaFolders();
+    const pages = await Promise.all(folders.map((folderId, i) => {
       if (state && !state[i]) return { files: [] };   // このフォルダはもう読み終わった
       const extra = { orderBy: 'createdTime desc', pageSize: '60' };
       if (state) extra.pageToken = state[i];
@@ -1900,7 +1916,9 @@ const Album = (function () {
         'nextPageToken,files(id,name,mimeType,size,createdTime,thumbnailLink,owners(displayName))', extra);
     }));
     const next = pages.map(d => d.nextPageToken || null);
+    const seen = new Set();
     const files = [].concat(...pages.map(d => d.files || []))
+      .filter(f => !seen.has(f.id) && seen.add(f.id))
       .sort((x, y) => String(y.createdTime || '').localeCompare(String(x.createdTime || '')));
     const data = { files: files, nextPageToken: next.some(Boolean) ? JSON.stringify(next) : null };
     return {
